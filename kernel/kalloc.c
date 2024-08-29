@@ -80,14 +80,3 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
-
-// get the number of bytes of free memory - lab2获取freemem
-uint64 getfreemem(void) {
-    uint64 n;
-    struct run *r;
-    // 遍历kmem.freelist链表
-    for (n = 0, r = kmem.freelist; r; r = r->next) {
-        ++n;
-    }
-    return n * PGSIZE;
-}

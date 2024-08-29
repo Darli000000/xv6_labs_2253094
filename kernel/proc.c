@@ -127,6 +127,14 @@ found:
     return 0;
   }
 
+  // lab3 Allocate a usyscall page.
+  if((p->usyscall = (struct usyscall *)kalloc()) == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  p->usyscall->pid = p->pid;
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -153,6 +161,10 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  //lab3 free usyscall page
+  if(p->usyscall)
+    kfree((void*)p->usyscall);
+  p->usyscall = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -196,6 +208,15 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
+  // lab3: map the usyscall just below TRAMPOLINE
+  if(mappages(pagetable, USYSCALL, PGSIZE,
+              (uint64)(p->usyscall), PTE_R | PTE_U) < 0){
+    uvmunmap(pagetable, USYSCALL, 1, 0);
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
   return pagetable;
 }
 
@@ -204,6 +225,8 @@ proc_pagetable(struct proc *p)
 void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
+  // lab3:unmap usyscall page
+  uvmunmap(pagetable, USYSCALL, 1, 0);
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
@@ -288,8 +311,6 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
-
-  np->mask = p->mask;    //lab2的trace中复制mask的状态
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -655,17 +676,4 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
-}
-
-// get the number of processes whose state is not UNUSED - lab2获取nproc
-uint64 getnproc(void) {
-    uint64 n;
-    struct proc *p;
-    // 遍历proc数组, 找非UNUSED状态进程
-    for(n=0, p = proc; p < &proc[NPROC]; ++p) {
-        if(p->state != UNUSED) {
-            ++n;
-        }
-    }
-    return n;
 }

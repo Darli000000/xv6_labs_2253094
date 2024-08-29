@@ -20,6 +20,14 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
-#define SYS_trace  22  // lab2添加trace系统调用号
-#define SYS_sysinfo 23  //lab2添加sysinfo系统调用
 
+// System calls for labs
+#define SYS_trace     22
+#define SYS_sysinfo   23
+#define SYS_sigalarm  24
+#define SYS_sigreturn 25
+#define SYS_symlink   26
+#define SYS_mmap      27
+#define SYS_munmap    28
+#define SYS_connect   29
+#define SYS_pgaccess  30

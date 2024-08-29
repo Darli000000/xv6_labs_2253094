@@ -130,6 +130,7 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
+
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
@@ -431,4 +432,51 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// lab3递归打印页表信息
+void vmp(pagetable_t pagetable, uint64 level)
+{
+  for(int i = 0; i < 512; i++)
+  {
+    pte_t pte = pagetable[i];
+    if(pte & PTE_V)
+    {
+	  for (int j = 0; j < level; ++j) {
+        if (j == 0) printf("..");
+        else printf(" ..");
+      }
+      uint64 child = PTE2PA(pte); // 通过pte映射下一级页表的物理地址
+      //打印pte的编号、pte地址、pte对应的物理地址(下一级页表的物理地址)
+      printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
+      // 查看是否到了最后一级，如果没有则继续递归调用当前函数。
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0)
+      {
+        vmp((pagetable_t)child, level+1);
+      }    
+    }
+  }
+}
+
+void vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  vmp(pagetable, 1);
+}
+
+// lab3: pgaccess
+int vm_pgaccess(pagetable_t pagetable, uint64 va){
+  pte_t *pte;
+
+  if(va >= MAXVA)
+    return 0;
+
+  pte = walk(pagetable, va, 0);
+  if(pte == 0)
+    return 0;
+  if((*pte & PTE_A) != 0){
+    *pte = *pte & (~PTE_A); // 第六位归零（PTE_A）
+    return 1;
+  }
+  return 0;
 }
