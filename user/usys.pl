@@ -36,3 +36,5 @@ entry("getpid");
 entry("sbrk");
 entry("sleep");
 entry("uptime");
+entry("trace"); # lab2添加Trace对应的entry
+entry("sysinfo") # lab2-2

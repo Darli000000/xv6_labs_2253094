@@ -20,3 +20,6 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
+#define SYS_trace  22  // lab2添加trace系统调用号
+#define SYS_sysinfo 23  //lab2添加sysinfo系统调用
+

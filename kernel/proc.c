@@ -289,6 +289,8 @@ fork(void)
   }
   np->sz = p->sz;
 
+  np->mask = p->mask;    //lab2的trace中复制mask的状态
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -653,4 +655,17 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+// get the number of processes whose state is not UNUSED - lab2获取nproc
+uint64 getnproc(void) {
+    uint64 n;
+    struct proc *p;
+    // 遍历proc数组, 找非UNUSED状态进程
+    for(n=0, p = proc; p < &proc[NPROC]; ++p) {
+        if(p->state != UNUSED) {
+            ++n;
+        }
+    }
+    return n;
 }
