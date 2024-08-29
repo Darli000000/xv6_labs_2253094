@@ -1,8 +1,8 @@
 #include "types.h"
 #include "riscv.h"
-#include "param.h"
 #include "defs.h"
 #include "date.h"
+#include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
@@ -46,7 +46,6 @@ sys_sbrk(void)
 
   if(argint(0, &n) < 0)
     return -1;
-  
   addr = myproc()->sz;
   if(growproc(n) < 0)
     return -1;
@@ -58,7 +57,6 @@ sys_sleep(void)
 {
   int n;
   uint ticks0;
-
 
   if(argint(0, &n) < 0)
     return -1;
@@ -74,44 +72,6 @@ sys_sleep(void)
   release(&tickslock);
   return 0;
 }
-
-
-#ifdef LAB_PGTBL
-int
-sys_pgaccess(void)
-{
-  // lab pgtbl: your code here.
-  // lab3
-  uint64 addr;
-  int len;
-  int bitmask;
-  if(argaddr(0, &addr) < 0)
-    return -1;
-  if(argint(1, &len) < 0)
-    return -1;
-  if(argint(2, &bitmask) < 0)
-    return -1;
-
-  if(len > 32 || len < 0){
-    return -1;
-  }
-
-  int res =0;
-  struct proc *p = myproc();
-  //算res
-  for(int i = 0; i < len; i++){
-    int va = addr + i * PGSIZE;
-    int abit = vm_pgaccess(p->pagetable, va);
-    res = res | abit << i;
-  }
-
-  if(copyout(p->pagetable, bitmask, (char*)&res, sizeof(res)) < 0){
-    return -1;
-  }
-
-  return 0;
-}
-#endif
 
 uint64
 sys_kill(void)

@@ -4,6 +4,8 @@
 #include "elf.h"
 #include "riscv.h"
 #include "defs.h"
+#include "spinlock.h"
+#include "proc.h"
 #include "fs.h"
 
 /*
@@ -29,6 +31,14 @@ kvmmake(void)
 
   // virtio mmio disk interface
   kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+#ifdef LAB_NET
+  // PCI-E ECAM (configuration space), for pci.c
+  kvmmap(kpgtbl, 0x30000000L, 0x30000000L, 0x10000000, PTE_R | PTE_W);
+
+  // pci.c maps the e1000's registers here.
+  kvmmap(kpgtbl, 0x40000000L, 0x40000000L, 0x20000, PTE_R | PTE_W);
+#endif  
 
   // PLIC
   kvmmap(kpgtbl, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
@@ -130,7 +140,6 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
-
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned. Returns 0 on success, -1 if walk() couldn't
@@ -175,8 +184,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
+    if((*pte & PTE_V) == 0) {
+      printf("va=%p pte=%p\n", a, *pte);
       panic("uvmunmap: not mapped");
+    }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -373,7 +384,7 @@ int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
   uint64 n, va0, pa0;
-
+  
   while(len > 0){
     va0 = PGROUNDDOWN(srcva);
     pa0 = walkaddr(pagetable, va0);
@@ -434,49 +445,5 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
-// lab3递归打印页表信息
-void vmp(pagetable_t pagetable, uint64 level)
-{
-  for(int i = 0; i < 512; i++)
-  {
-    pte_t pte = pagetable[i];
-    if(pte & PTE_V)
-    {
-	  for (int j = 0; j < level; ++j) {
-        if (j == 0) printf("..");
-        else printf(" ..");
-      }
-      uint64 child = PTE2PA(pte); // 通过pte映射下一级页表的物理地址
-      //打印pte的编号、pte地址、pte对应的物理地址(下一级页表的物理地址)
-      printf("%d: pte %p pa %p\n", i, pte, PTE2PA(pte));
-      // 查看是否到了最后一级，如果没有则继续递归调用当前函数。
-      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0)
-      {
-        vmp((pagetable_t)child, level+1);
-      }    
-    }
-  }
-}
 
-void vmprint(pagetable_t pagetable)
-{
-  printf("page table %p\n", pagetable);
-  vmp(pagetable, 1);
-}
 
-// lab3: pgaccess
-int vm_pgaccess(pagetable_t pagetable, uint64 va){
-  pte_t *pte;
-
-  if(va >= MAXVA)
-    return 0;
-
-  pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
-  if((*pte & PTE_A) != 0){
-    *pte = *pte & (~PTE_A); // 第六位归零（PTE_A）
-    return 1;
-  }
-  return 0;
-}
