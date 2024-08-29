@@ -5,8 +5,8 @@ struct buf {
   uint blockno;
   struct sleeplock lock;
   uint refcnt;
-  struct buf *prev; // LRU cache list
-  struct buf *next;
+  struct buf *next;     // hash list
   uchar data[BSIZE];
+  uint timestamp;   // lab8: 最后一次使用buf的时间
 };
 
