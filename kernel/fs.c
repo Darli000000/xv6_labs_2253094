@@ -375,8 +375,7 @@ iunlockput(struct inode *ip)
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
 static uint
-bmap(struct inode *ip, uint bn)
-{
+bmap(struct inode *ip, uint bn){
   uint addr, *a;
   struct buf *bp;
 
@@ -401,6 +400,49 @@ bmap(struct inode *ip, uint bn)
     return addr;
   }
 
+  // lab9：处理双重间接块
+
+  // 减去一级间接块的数量，bn 现在表示双重间接块中的块号
+  bn -= NINDIRECT;
+
+  // 如果 bn 位于双重间接块范围内
+  if(bn < NDOUBLYINDIRECT) {
+    // 获取双重间接块的地址
+    if((addr = ip->addrs[NDIRECT + 1]) == 0) {
+        // 如果双重间接块还没有分配，则分配一个新的块
+        ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+    }
+    // 读取双重间接块
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // 获取对应的一级间接块地址
+    if((addr = a[bn / NINDIRECT]) == 0) {
+        // 如果一级间接块还没有分配，则分配一个新的块
+        a[bn / NINDIRECT] = addr = balloc(ip->dev);
+        log_write(bp); // 写入日志，确保操作的原子性
+    }
+    brelse(bp); // 释放双重间接块的缓存
+
+    // 读取一级间接块
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // bn 现在是该一级间接块中的直接块号
+    bn %= NINDIRECT;
+
+    // 获取对应的直接块地址
+    if((addr = a[bn]) == 0) {
+        // 如果直接块还没有分配，则分配一个新的块
+        a[bn] = addr = balloc(ip->dev);
+        log_write(bp); // 写入日志，确保操作的原子性
+    }
+    brelse(bp); // 释放一级间接块的缓存
+
+    // 返回找到或分配的直接块地址
+    return addr;
+  }
+
   panic("bmap: out of range");
 }
 
@@ -409,32 +451,58 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i, j, k;  // lab9：用于遍历不同级别的块
+  struct buf *bp, *bp2;     // lab9：用于读取块的缓冲区
+  uint *a, *a2; // lab9：指向块数据的指针
 
+  // 释放直接块
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
-      bfree(ip->dev, ip->addrs[i]);
-      ip->addrs[i] = 0;
+      bfree(ip->dev, ip->addrs[i]);  // 释放块
+      ip->addrs[i] = 0;  // 清空对应的块地址
     }
   }
 
+  // 释放一级间接块及其指向的所有直接块
   if(ip->addrs[NDIRECT]){
-    bp = bread(ip->dev, ip->addrs[NDIRECT]);
-    a = (uint*)bp->data;
+    bp = bread(ip->dev, ip->addrs[NDIRECT]);  // 读取一级间接块
+    a = (uint*)bp->data;  // 获取一级间接块中的数据
     for(j = 0; j < NINDIRECT; j++){
       if(a[j])
-        bfree(ip->dev, a[j]);
+        bfree(ip->dev, a[j]);  // 释放一级间接块指向的直接块
     }
-    brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
-    ip->addrs[NDIRECT] = 0;
+    brelse(bp);  // 释放一级间接块的缓冲区
+    bfree(ip->dev, ip->addrs[NDIRECT]);  // 释放一级间接块本身
+    ip->addrs[NDIRECT] = 0;  // 清空对应的块地址
   }
 
-  ip->size = 0;
-  iupdate(ip);
+  // 释放双重间接块及其指向的所有一级间接块和直接块
+  if(ip->addrs[NDIRECT + 1]) {
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);  // 读取双重间接块
+    a = (uint*)bp->data;  // 获取双重间接块中的数据
+    for(j = 0; j < NINDIRECT; ++j) {
+      if(a[j]) {
+        bp2 = bread(ip->dev, a[j]);  // 读取一级间接块
+        a2 = (uint*)bp2->data;  // 获取一级间接块中的数据
+        for(k = 0; k < NINDIRECT; ++k) {
+          if(a2[k]) {
+            bfree(ip->dev, a2[k]);  // 释放一级间接块指向的直接块
+          }
+        }
+        brelse(bp2);  // 释放一级间接块的缓冲区
+        bfree(ip->dev, a[j]);  // 释放一级间接块本身
+        a[j] = 0;  // 清空对应的块地址
+      }
+    }
+    brelse(bp);  // 释放双重间接块的缓冲区
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);  // 释放双重间接块本身
+    ip->addrs[NDIRECT + 1] = 0;  // 清空对应的块地址
+  }
+
+  ip->size = 0;  // 清空 inode 的大小
+  iupdate(ip);  // 更新 inode 的元数据
 }
+
 
 // Copy stat information from inode.
 // Caller must hold ip->lock.

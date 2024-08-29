@@ -23,53 +23,32 @@
 #include "fs.h"
 #include "buf.h"
 
-// lab8
-#define NBUCKET 13      // the count of hash table's buckets
-#define HASH(blockno) (blockno % NBUCKET)
-
-extern uint ticks;  // lab8
-
 struct {
-  struct spinlock lock;   // used for the buf alloc and size
+  struct spinlock lock;
   struct buf buf[NBUF];
-  // lab8
-  int size;     // record the count of used buf
-  struct buf buckets[NBUCKET];  // lab8
-  struct spinlock locks[NBUCKET];   // buckets' locks
-  struct spinlock hashlock;     // the hash table's lock
+
   // Linked list of all buffers, through prev/next.
   // Sorted by how recently the buffer was used.
   // head.next is most recent, head.prev is least.
-//  struct buf head;    // lab8： delete
+  struct buf head;
 } bcache;
 
 void
 binit(void)
 {
-  int i;  //lab8
   struct buf *b;
-
-  bcache.size = 0;  // lab8
 
   initlock(&bcache.lock, "bcache");
 
-  initlock(&bcache.hashlock, "bcache_hash");    // lab8: init hash lock
-
-  // lab8: 初始化所有bucket locks
-  for(i = 0; i < NBUCKET; ++i) {
-    initlock(&bcache.locks[i], "bcache_bucket");
-  }
-
-  // lab8 delete
   // Create linked list of buffers
-  //bcache.head.prev = &bcache.head;
-  //bcache.head.next = &bcache.head;
+  bcache.head.prev = &bcache.head;
+  bcache.head.next = &bcache.head;
   for(b = bcache.buf; b < bcache.buf+NBUF; b++){
-    //b->next = bcache.head.next;
-    //b->prev = &bcache.head;
+    b->next = bcache.head.next;
+    b->prev = &bcache.head;
     initsleeplock(&b->lock, "buffer");
-    //bcache.head.next->prev = b;
-    //bcache.head.next = b;
+    bcache.head.next->prev = b;
+    bcache.head.next = b;
   }
 }
 
@@ -80,93 +59,34 @@ static struct buf*
 bget(uint dev, uint blockno)
 {
   struct buf *b;
-  // lab8-2：通过 HASH 函数计算 blockno 对应的桶索引
-  int idx = HASH(blockno);
-  struct buf *pre, *minb = 0, *minpre;
-  uint mintimestamp;
-  int i;
 
-  // 在对应的哈希桶中查找缓存的 buf
-  acquire(&bcache.locks[idx]);  // lab8-2
-  for(b = bcache.buckets[idx].next; b; b = b->next){
+  acquire(&bcache.lock);
+
+  // Is the block already cached?
+  for(b = bcache.head.next; b != &bcache.head; b = b->next){
     if(b->dev == dev && b->blockno == blockno){
-      b->refcnt++;  // 增加引用计数
-      release(&bcache.locks[idx]);  // lab8-2
+      b->refcnt++;
+      release(&bcache.lock);
       acquiresleep(&b->lock);
       return b;
     }
   }
 
-  // 缓存未命中
-  // 检查是否有未使用的 buf - lab8-2
-  acquire(&bcache.lock);
-  if(bcache.size < NBUF) {
-    b = &bcache.buf[bcache.size++];
-    release(&bcache.lock);
-    b->dev = dev;
-    b->blockno = blockno;
-    b->valid = 0;
-    b->refcnt = 1;
-    b->next = bcache.buckets[idx].next;  // 插入到哈希桶链表头部
-    bcache.buckets[idx].next = b;
-    release(&bcache.locks[idx]);
-    acquiresleep(&b->lock);
-    return b;
+  // Not cached.
+  // Recycle the least recently used (LRU) unused buffer.
+  for(b = bcache.head.prev; b != &bcache.head; b = b->prev){
+    if(b->refcnt == 0) {
+      b->dev = dev;
+      b->blockno = blockno;
+      b->valid = 0;
+      b->refcnt = 1;
+      release(&bcache.lock);
+      acquiresleep(&b->lock);
+      return b;
+    }
   }
-  release(&bcache.lock);
-  release(&bcache.locks[idx]);
-
-  // 根据时间戳选择哈希桶中最近最少使用的块 - lab8-2
-  acquire(&bcache.hashlock);
-  for(i = 0; i < NBUCKET; ++i) {
-      mintimestamp = -1;  // 初始化最小时间戳为无穷大
-      acquire(&bcache.locks[idx]);
-      for(pre = &bcache.buckets[idx], b = pre->next; b; pre = b, b = b->next) {
-          // 重新搜索块，防止竞争条件
-          if(idx == HASH(blockno) && b->dev == dev && b->blockno == blockno){
-              b->refcnt++;  // 增加引用计数
-              release(&bcache.locks[idx]);
-              release(&bcache.hashlock);
-              acquiresleep(&b->lock);
-              return b;
-          }
-          // 找到最近最少使用且未被引用的块
-          if(b->refcnt == 0 && b->timestamp < mintimestamp) {
-              minb = b;
-              minpre = pre;
-              mintimestamp = b->timestamp;
-          }
-      }
-      // 找到未使用的块
-      if(minb) {
-          minb->dev = dev;
-          minb->blockno = blockno;
-          minb->valid = 0;
-          minb->refcnt = 1;
-          // 如果块在其他桶中，需要将其移动到正确的桶
-          if(idx != HASH(blockno)) {
-              minpre->next = minb->next;    // 从旧桶中移除
-              release(&bcache.locks[idx]);
-              idx = HASH(blockno);  // 计算正确的桶索引
-              acquire(&bcache.locks[idx]);
-              minb->next = bcache.buckets[idx].next;    // 将块移动到正确的桶
-              bcache.buckets[idx].next = minb;
-          }
-          release(&bcache.locks[idx]);
-          release(&bcache.hashlock);
-          acquiresleep(&minb->lock);
-          return minb;
-      }
-      release(&bcache.locks[idx]);
-      if(++idx == NBUCKET) {
-          idx = 0;  // 遍历下一个桶
-      }
-  }
-
-  // 如果没有可用的 buf，触发 panic
   panic("bget: no buffers");
 }
-
 
 // Return a locked buf with the contents of the indicated block.
 struct buf*
@@ -196,48 +116,38 @@ bwrite(struct buf *b)
 void
 brelse(struct buf *b)
 {
-  int idx;  //lab8
   if(!holdingsleep(&b->lock))
     panic("brelse");
 
   releasesleep(&b->lock);
 
-  // lab8: change the lock
-  idx = HASH(b->blockno);
-
-  acquire(&bcache.locks[idx]);
+  acquire(&bcache.lock);
   b->refcnt--;
   if (b->refcnt == 0) {
     // no one is waiting for it.
-    //lab8: delete
-    //b->next->prev = b->prev;
-    //b->prev->next = b->next;
-    //b->next = bcache.head.next;
-    //b->prev = &bcache.head;
-    //bcache.head.next->prev = b;
-    //bcache.head.next = b;
-    b->timestamp = ticks;  //lab8
+    b->next->prev = b->prev;
+    b->prev->next = b->next;
+    b->next = bcache.head.next;
+    b->prev = &bcache.head;
+    bcache.head.next->prev = b;
+    bcache.head.next = b;
   }
   
-  release(&bcache.locks[idx]);
+  release(&bcache.lock);
 }
 
 void
 bpin(struct buf *b) {
-  // lab8: change the bpin
-  int idx = HASH(b->blockno);
-  acquire(&bcache.locks[idx]);
+  acquire(&bcache.lock);
   b->refcnt++;
-  release(&bcache.locks[idx]);
+  release(&bcache.lock);
 }
 
 void
 bunpin(struct buf *b) {
-  // lab8: change the bunpin
-  int idx = HASH(b->blockno);
-  acquire(&bcache.locks[idx]);
+  acquire(&bcache.lock);
   b->refcnt--;
-  release(&bcache.locks[idx]);
+  release(&bcache.lock);
 }
 
 
