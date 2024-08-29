@@ -283,49 +283,9 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
-// lab9：递归地跟踪符号链接
-// 调用者必须持有 ip->lock
-// 当函数返回时，调用者将持有返回的 inode 的 ip->lock
-static struct inode* follow_symlink(struct inode* ip) {
-  uint inums[NSYMLINK];  // 存储已访问的 inode 编号，以检测循环
-  int i, j;
-  char target[MAXPATH];  // 存储符号链接的目标路径
-
-  for(i = 0; i < NSYMLINK; ++i) {
-    inums[i] = ip->inum;  // 记录当前 inode 编号
-    // 从符号链接文件中读取目标路径
-    if(readi(ip, 0, (uint64)target, 0, MAXPATH) <= 0) {
-      iunlockput(ip);  // 解锁并释放 inode
-      printf("open_symlink: open symlink failed\n");  // 打印错误信息
-      return 0;
-    }
-    iunlockput(ip);  // 解锁并释放当前的 inode
-
-    // 获取目标路径对应的 inode
-    if((ip = namei(target)) == 0) {
-      printf("open_symlink: path \"%s\" is not exist\n", target);  // 打印错误信息
-      return 0;
-    }
-    // 检查是否形成循环
-    for(j = 0; j <= i; ++j) {
-      if(ip->inum == inums[j]) {
-        printf("open_symlink: links form a cycle\n");  // 打印循环错误信息
-        return 0;
-      }
-    }
-    ilock(ip);  // 锁定目标 inode
-    if(ip->type != T_SYMLINK) {  // 如果目标 inode 不是符号链接，返回它
-      return ip;
-    }
-  }
-
-  iunlockput(ip);  // 如果达到最大递归深度，解锁并释放 inode
-  printf("open_symlink: the depth of links reaches the limit\n");  // 打印深度限制错误信息
-  return 0;
-}
-
 uint64
-sys_open(void){
+sys_open(void)
+{
   char path[MAXPATH];
   int fd, omode;
   struct file *f;
@@ -360,14 +320,6 @@ sys_open(void){
     iunlockput(ip);
     end_op();
     return -1;
-  }
-
-  // lab9: handle the symlink
-  if(ip->type == T_SYMLINK && (omode & O_NOFOLLOW) == 0) {
-    if((ip = follow_symlink(ip)) == 0) {
-      end_op();
-      return -1;
-    }
   }
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
@@ -530,34 +482,5 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
-  return 0;
-}
-
-// lab9: sys_symlink函数
-uint64 sys_symlink(void) {
-  char target[MAXPATH], path[MAXPATH];
-  struct inode *ip;
-  int n;
-
-  if ((n = argstr(0, target, MAXPATH)) < 0
-    || argstr(1, path, MAXPATH) < 0) {
-    return -1;
-  }
-
-  begin_op();
-  // 创建symlink's inode
-  if((ip = create(path, T_SYMLINK, 0, 0)) == 0) {
-    end_op();
-    return -1;
-  }
-  // 向inode写入目标路径
-  if(writei(ip, 0, (uint64)target, 0, n) != n) {
-    iunlockput(ip);
-    end_op();
-    return -1;
-  }
-
-  iunlockput(ip);
-  end_op();
   return 0;
 }

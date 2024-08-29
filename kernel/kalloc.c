@@ -21,13 +21,60 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+  char *ref_page; //lab6
+  int page_cnt;   //lab6
+  char *end_;     //lab6
 } kmem;
+
+int pagecnt(void *pa_start, void *pa_end){
+  char *p;
+  int cnt = 0;
+  p = (char*)PGROUNDUP((uint64)pa_start);
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+    cnt++;
+  return cnt;
+}
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
+  kmem.page_cnt = pagecnt(end, (void *) PHYSTOP);//lab6
+
+  //lab6: 
+  kmem.ref_page = end;
+  for(int i = 0; i < kmem.page_cnt; i++){
+    kmem.ref_page[i] = 0;
+  }
+  kmem.end_ = kmem.ref_page + kmem.page_cnt;
+
+  freerange(kmem.end_, (void*)PHYSTOP);
+}
+
+//lab6:对页表进行计数
+int page_index(uint64 pa){
+  pa = PGROUNDDOWN(pa);
+  int res = (pa - (uint64) kmem.end_) / PGSIZE;
+  if(res < 0 || res >= kmem.page_cnt){
+    panic("page_index illegal");
+  }
+  return res;
+}
+
+//lab6:
+void incr(void *pa){
+  int index = page_index((uint64) pa);
+  acquire(&kmem.lock);
+  kmem.ref_page[index]++;
+  release(&kmem.lock);
+}
+
+//lab6:
+void desc(void *pa){
+  int index = page_index((uint64) pa);
+  acquire(&kmem.lock);
+  kmem.ref_page[index]--;
+  release(&kmem.lock);
 }
 
 void
@@ -46,6 +93,17 @@ freerange(void *pa_start, void *pa_end)
 void
 kfree(void *pa)
 {
+  //lab6:释放操作
+  int index = page_index((uint64) pa);
+  if(kmem.ref_page[index] > 1){
+    desc(pa);
+    return;
+  }
+
+  if(kmem.ref_page[index] == 1){
+    desc(pa);
+  }
+
   struct run *r;
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
@@ -62,6 +120,22 @@ kfree(void *pa)
   release(&kmem.lock);
 }
 
+//lab6: 返回当前有多少空闲页表
+void print_free_pages_cnt(){
+  struct run *r;
+  int cnt = 0;
+
+  acquire(&kmem.lock);
+  r = kmem.freelist;
+  while (r->next){
+    r = r->next;
+    cnt++;
+  }
+  release(&kmem.lock);
+
+  printf("free_pages_cnt:%d\n", cnt);
+}
+
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
@@ -76,7 +150,11 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r){
     memset((char*)r, 5, PGSIZE); // fill with junk
+    //print_free_pages_cnt();
+    incr((void *)r);//lab6
+  }
+
   return (void*)r;
 }
